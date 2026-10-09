@@ -9,6 +9,6 @@ Audio-reactive psychedelic visualizer for iPhone / laptop. Mic + camera + multit
 3. Settings → Display & Brightness → Auto-Lock → **Never**
 4. USB-C → HDMI to mirror to a TV (rotate to landscape)
 
-Laptop keys: `1–6` looks · `←/→` next look · `L` logo · `C` camera · `P` palette · `A` autopilot · `Space` beat · `H` hide UI · `F` fullscreen
+Laptop keys: `1–7` looks · `←/→` next look · `L` logo · `C` camera · `P` palette · `A` autopilot · `Space` beat · `H` hide UI · `F` fullscreen
 
 Source: `src/app.html` (built into `index.html` by `src/build.py`, which inlines the font and logo).

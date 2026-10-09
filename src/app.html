@@ -128,7 +128,7 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:22px;heigh
     <div class="hint">Drum pads split the screen into zones, each with its own color and hit. Autopilot changes looks every 32 beats.</div></div>
   <div class="sec"><h3>QUALITY</h3><div class="row" id="quals"></div></div>
   <div class="sec"><div class="row"><button class="pill" id="cleanBtn">CLEAN TV MODE</button><button class="pill" id="fsBtn">FULLSCREEN</button></div>
-    <div class="hint">Clean TV mode hides the menu button. Tap with three fingers to bring it back.<br>Keys: 1–6 looks · L logo · C camera · A autopilot · Space beat · H hide</div></div>
+    <div class="hint">Clean TV mode hides the menu button. Tap with three fingers to bring it back.<br>Keys: 1–7 looks · L logo · C camera · A autopilot · Space beat · H hide</div></div>
 </div>
 
 <div id="help"><div class="card">
@@ -153,12 +153,13 @@ gl.getExtension('EXT_color_buffer_half_float');
 gl.getExtension('OES_texture_float_linear');
 
 /* ---------------- settings ---------------- */
-const LOOKS = ['marble','ink','kaleido','mandala','mandala2','fluid'];
-const LOOK_NAMES = {marble:'MARBLE', ink:'INK', kaleido:'KALEIDO', mandala:'MANDALA', mandala2:'MANDALA II', fluid:'FLUID'};
+const LOOKS = ['marble','ink','kaleido','mandala','mandala2','fluid','shuffle'];
+const LOOK_NAMES = {marble:'MARBLE', ink:'INK', kaleido:'KALEIDO', mandala:'MANDALA', mandala2:'MANDALA II', fluid:'FLUID', shuffle:'SHUFFLE'};
 const LOOK_PARAMS = {
   marble:  {velDiss:0.9,  dyeDiss:1.6, curl:6,  noise:280,  noiseScale:1.6, buoy:0,    emitF:260,  emitDye:0.02, emitR:0.5, relax:0.018, splatDye:0.35},
   ink:     {velDiss:0.35, dyeDiss:0.30, curl:24, noise:160, noiseScale:2.5, buoy:-90,  emitF:160,  emitDye:0.03, emitR:0.35, relax:0, splatDye:0.5},
   kaleido: {velDiss:0.4,  dyeDiss:0.9, curl:30, noise:300,  noiseScale:2.0, buoy:0,    emitF:420, emitDye:0.06, emitR:0.35, relax:0, splatDye:0.45},
+  shuffle: {velDiss:0.5,  dyeDiss:1.2, curl:24, noise:200,  noiseScale:2.0, buoy:0,    emitF:300, emitDye:0.015, emitR:0.3, relax:0, splatDye:0.4},
   mandala2:{velDiss:0.6,  dyeDiss:1.4, curl:20, noise:250,  noiseScale:2.0, buoy:0,    emitF:300, emitDye:0.02, emitR:0.3, relax:0, splatDye:0.35},
   mandala: {velDiss:0.6,  dyeDiss:1.3, curl:20, noise:250,  noiseScale:2.0, buoy:0,    emitF:320, emitDye:0.025, emitR:0.3, relax:0, splatDye:0.4},
   fluid:   {velDiss:0.2,  dyeDiss:0.8, curl:32, noise:120,  noiseScale:2.0, buoy:0,    emitF:520, emitDye:0.05, emitR:0.3, relax:0, splatDye:0.5},
@@ -527,6 +528,82 @@ void main(){
   if (uCamOn > .5) col = mix(col, max(col, psyCam(suv)), uCamBlend);
   o = vec4(tmN(col*(1. + .1*uBeat)), 1.);
 }`;
+FS.shuffle = LOOKU + `
+uniform sampler2D uWav;
+uniform vec4 uPA0, uPA1, uPB0, uPB1;      // preset A / B params
+uniform vec4 uTA, uTB;                    // types: warp1, warp2, wave1, wave2
+uniform vec4 uSA, uSB;                    // sym type, sym N, hue offset, decay
+uniform float uMix, uPx;
+mat2 rot2(float a){ float c = cos(a), s = sin(a); return mat2(c, -s, s, c); }
+vec2 kfold(vec2 p, float n){ float r = length(p), a = atan(p.y, p.x), s = 6.28318/n; a = mod(a, s) - s*.5; return vec2(cos(a), abs(sin(a)))*r; }
+vec3 hueRot(vec3 c, float h){ vec3 k = vec3(.57735); float ca = cos(h), sa = sin(h); return c*ca + cross(k, c)*sa + k*dot(k, c)*(1. - ca); }
+float wav(float x){ return texture(uWav, vec2(fract(x), .5)).r*2. - 1.; }
+float spec(float x){ return texture(uSpec, vec2(clamp(x, 0., 1.), .5)).r; }
+
+// ---- flow fields that warp the previous frame (MilkDrop / iTunes style) ----
+vec2 warp(vec2 p, float ty, vec4 k){
+  float r = length(p), a = atan(p.y, p.x), t = uTime;
+  if (ty < .5) return rot2(k.x*.03)*p*(1. - k.y*.03 - .02*uBassS);                       // zoom + spin
+  if (ty < 1.5) { a += k.x*.08*exp(-r*k.z*2.); return vec2(cos(a), sin(a))*r*(1. - .012 - .02*uBassS); }   // swirl
+  if (ty < 2.5) return p*(1. - .01) + .006*k.x*sin(p.yx*(3. + k.z*6.) + t*(1. + k.y));     // ripple
+  if (ty < 3.5) { r *= 1. - .03*k.y*(1. + sin(r*8.*k.z - t*2.)); return vec2(cos(a + .02*k.x), sin(a + .02*k.x))*r; }  // tunnel pulse
+  if (ty < 4.5) return rot2(.01*k.x)*kfold(p, floor(3. + k.z*6.))*(1. - .02*k.y);         // kaleido feedback
+  if (ty < 5.5) return p*(1. - .04*k.y*(1. - r)) ;                                          // bulge
+  if (ty < 6.5) return p*.985 + .02*k.x*(vec2(fbm(p*2. + t*.1), fbm(p*2. - t*.1 + 5.)) - .5);  // turbulent drift
+  return rot2(.015*k.x)*(abs(p)*(1. - .015*k.y) - .004*k.z);                               // mirror fold drift
+}
+vec2 sym(vec2 p, float ty, float n){
+  if (ty < .5) return p;
+  if (ty < 1.5) return vec2(abs(p.x), p.y);
+  if (ty < 2.5) return abs(p);
+  return kfold(p, n);
+}
+// ---- shapes drawn from the live audio ----
+float shape(vec2 p, float ty, vec4 k){
+  float r = length(p), a = atan(p.y, p.x), t = uTime, px = uPx;
+  float d = 1e3;
+  if (ty < .5) { float R = .35 + .1*k.z + .15*uBassS; d = abs(r - R - wav(a/6.28318 + .5)*.12*(1. + uLevel)); }        // circular scope
+  else if (ty < 1.5) { vec2 q = rot2(t*.1*k.x)*p; d = abs(q.y - wav(q.x*.5 + .5)*.18*(1. + uLevel)); }                // oscilloscope line
+  else if (ty < 2.5) { float n = 24. + floor(k.z*24.); float af = fract(a/6.28318*n); float b = spec(abs(fract(a/6.28318 + .5)*2. - 1.)*.9);
+                       float R0 = .18; d = max(abs(af - .5)*6.28318*r/n - .012, max(R0 - r, r - R0 - .45*b)); }        // radial spectrum bars
+  else if (ty < 3.5) { for (int i = 0; i < 9; i++) { float fi = float(i); float ph = t*(.4 + .1*fi)*(k.x > 0. ? 1. : -1.) + fi*.7;
+                       vec2 c = vec2(cos(ph), sin(ph*1.3 + k.y))*(.25 + .3*spec(fi/9.)); d = min(d, length(p - c) - .02 - .05*spec(fi/9.)); } }  // dancing orbs
+  else if (ty < 4.5) { float n = 3. + floor(k.z*6.); vec2 q = rot2(t*.2*k.x)*p; float aa = atan(q.y, q.x);
+                       float R = .3 + .15*uBassS; float st = R*cos(3.14159/n)/cos(mod(aa, 6.28318/n) - 3.14159/n); d = abs(length(q) - st*(1. + .3*spec(.1))); }  // pulsing polygon
+  else if (ty < 5.5) { vec2 q = vec2(wav(t*.05 + p.x*.3 + .25), wav(t*.05 + p.x*.3 + .5))*.35; d = length(p - q) - .01 - .03*uHigh; // lissajous comet
+                       for (int i = 1; i < 6; i++) { float fi = float(i)*.013; vec2 qi = vec2(wav(t*.05 + fi + .25), wav(t*.05 + fi + .5))*.35; d = min(d, length(p - qi) - .008); } }
+  else { float R = .15 + .5*fract(t*.25*(.6 + k.y) ); d = abs(r - R)*(1.2 - spec(.2)) ; }                                  // expanding rings
+  return d;
+}
+vec3 layer(vec2 p, vec4 T, vec4 P0, vec4 P1, vec4 SY, out vec2 wp){
+  wp = warp(warp(p, T.x, P0), T.y, P1);
+  vec2 sp = sym(rot2(uTime*.05*P0.w)*p, SY.x, SY.y);
+  float px = uPx;
+  float d1 = shape(sp*.8, T.z, P0), d2 = shape(sp*1.05, T.w, P1);
+  float h1 = 1. - smoothstep(0., px*1.8, d1), h2 = 1. - smoothstep(0., px*1.8, d2);
+  float g1 = exp(-max(d1, 0.)/(px*10.)), g2 = exp(-max(d2, 0.)/(px*10.));
+  vec3 c1 = pal(uHue + SY.z + uTime*.03), c2 = pal(uHue + SY.z + .45 + length(p)*.4);
+  return c1*(h1*.8 + g1*.12)*(.5 + .8*uLevel) + c2*(h2*.65 + g2*.1)*(.4 + .8*uHigh);
+}
+void main(){
+  vec2 p = vUv - .5; p.x *= aspect; p /= min(aspect, 1.)*.5;
+  vec2 wA, wB;
+  vec3 dA = layer(p, uTA, uPA0, uPA1, uSA, wA);
+  vec3 dB = layer(p, uTB, uPB0, uPB1, uSB, wB);
+  vec2 w = mix(wA, wB, uMix);
+  float kk = min(aspect, 1.)*.5;
+  vec3 prev = texture(uPrev, mirrorUV(vec2(w.x*kk/aspect, w.y*kk) + .5)).rgb;
+  float decay = mix(uSA.w, uSB.w, uMix);
+  vec3 col = hueRot(prev, .015 + .03*uMidS)*decay;
+  col += mix(dA, dB, uMix)*(1. + .4*uBeat);
+  // nebula: faint audio-tinted color field the flow fields churn into clouds
+  float nb = fbm(p*1.3 + vec2(uTime*.05, -uTime*.04));
+  col += pal(nb*1.5 + uHue + mix(uSA.z, uSB.z, uMix) + .2)*smoothstep(.35, .8, nb)*.035*(.4 + 1.5*uLevel);
+  col += tm(shadeDye(vUv), 2.)*.35;
+  if (uCamOn > .5) col = mix(col, max(col, psyCam(vUv)), uCamBlend);
+  col = col/(1. + max(col - 1., 0.)*.7);
+  o = vec4(col, 1.);
+}`;
 FS.fluid = LOOKU + `void main(){
   vec3 c = tm(shadeDye(vUv), 2.4);
   vec3 bg = pal(vUv.y*.3 + uHue)*.025;
@@ -756,6 +833,7 @@ buildLogo();
 const SPEC_N = 64;
 const specTex = makeTex(SPEC_N, 1, gl.R8, gl.RED, gl.UNSIGNED_BYTE, gl.LINEAR);
 const specData = new Uint8Array(SPEC_N);
+const WAV_N = 256; const wavTex = makeTex(WAV_N, 1, gl.R8, gl.RED, gl.UNSIGNED_BYTE, gl.LINEAR); const wavData = new Uint8Array(WAV_N).fill(128); let wavRaw = null;
 const camTex = [makeTex(2,2,gl.RGBA8,gl.RGBA,gl.UNSIGNED_BYTE,gl.LINEAR), makeTex(2,2,gl.RGBA8,gl.RGBA,gl.UNSIGNED_BYTE,gl.LINEAR)];
 let camIdx = 0;
 let flowF = null;
@@ -845,6 +923,16 @@ function analyze(dt, now){
     raw = [.15 + .7*kick, .25 + .2*Math.sin(t*1.3) + .35*snare, .2 + .15*Math.sin(t*2.7 + 1) + .3*Math.pow(1 - (bt*2 % 1), 8), .15 + .1*Math.sin(t*.7)];
     for (let i = 0; i < SPEC_N; i++) { const f = i/SPEC_N; specData[i] = Math.min(255, 255*Math.max(0, (1-f)*kick*.9 + .25 + .25*Math.sin(t*2 + f*12 + bar*6)*(.5+f))*S.sens); }
   }
+  // waveform (time domain) for oscilloscope shapes
+  if (A.ok && !S.demo && A.an) {
+    if (!wavRaw) wavRaw = new Uint8Array(A.an.fftSize);
+    A.an.getByteTimeDomainData(wavRaw);
+    let pk = 4; for (let i = 0; i < wavRaw.length; i += 8) pk = Math.max(pk, Math.abs(wavRaw[i] - 128));
+    const g = Math.min(6, 100/pk);
+    for (let i = 0; i < WAV_N; i++) wavData[i] = Math.max(0, Math.min(255, 128 + (wavRaw[i*4] - 128)*g));
+  } else { const t = now/1000; for (let i = 0; i < WAV_N; i++) { const x = i/WAV_N; wavData[i] = 128 + 90*Math.sin(x*6.283*3 + t*4)*Math.sin(x*6.283 + t)*(.4 + .6*raw[0]); } }
+  gl.bindTexture(gl.TEXTURE_2D, wavTex); gl.pixelStorei(gl.UNPACK_ALIGNMENT, 1);
+  gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, WAV_N, 1, gl.RED, gl.UNSIGNED_BYTE, wavData);
   // auto gain per band
   const norm = raw.map((v, i) => {
     A.peaks[i] = Math.max(v, A.peaks[i]*Math.pow(.997, dt*60), .04);
@@ -980,10 +1068,12 @@ function onBeat(s){
     case 'marble': kickT = Math.min(1.5, kickT + .35*s); if (beatCount % 8 === 0) splat(.25 + R()*.5, .25 + R()*.5, 0, 0, null, 2.2, 2, (R() > .5 ? 1 : -1)*(90 + 90*s)); break;
     case 'ink': { const n = 1 + (s > .7 ? 1 : 0); for (let k = 0; k < n; k++) splat(.15 + R()*.7, .92, (R()-.5)*60, -160 - 200*s, col().map(c => c*1.8), .55); break; }
     case 'kaleido': case 'fluid': { const n = 2 + Math.round(s*3); for (let k = 0; k < n; k++) { const a = R()*6.283, f = 450 + 650*s; splat(.2 + R()*.6, .2 + R()*.6, Math.cos(a)*f, Math.sin(a)*f, col(), .25 + R()*.35); } break; }
+    case 'shuffle': kickT = Math.min(1.5, kickT + .3*s); break;
     case 'mandala2': kickT = Math.min(1.5, kickT + .3*s); splat(.5, .5, 0, 0, col().map(c => c*.5), .3, 1, 300*s + 120); break;
     case 'mandala': splat(.5, .5, 0, 0, col().map(c => c*.7), .35, beatCount % 2 ? 1 : 2, 600*s + 250); break;
   }
   if (S.auto && beatCount % 32 === 0) nextLook(1, true);
+  if (S.look === 'shuffle' && !SH.morphing && beatCount % 24 === 0 && time - SH.lastSwitch > 8) shuffleNext();
 }
 
 /* ---------------- simulation step ---------------- */
@@ -1028,12 +1118,31 @@ let camOK = false;
 const DBG = {};
 
 let lastSegs = 0;
+/* ---- SHUFFLE preset engine: random combos of flow fields, audio shapes, symmetry ---- */
+function randPreset(){
+  const R = Math.random, sgn = () => R() < .5 ? -1 : 1;
+  return { T:[Math.floor(R()*8), Math.floor(R()*8), Math.floor(R()*7), Math.floor(R()*7)],
+    P0:[sgn()*(.4 + R()), .3 + R(), R(), sgn()*R()], P1:[sgn()*(.3 + R()), .2 + R()*.8, R(), sgn()*R()],
+    SY:[Math.floor(R()*4), [3,4,5,6,8,10,12][Math.floor(R()*7)], R(), .9 + R()*.065] };
+}
+const SH = {a: randPreset(), b: randPreset(), mix: 0, morphing: false, lastSwitch: 0};
+function shuffleNext(){ SH.a = SH.mix > .5 ? SH.b : SH.a; SH.b = randPreset(); SH.mix = 0; SH.morphing = true; SH.lastSwitch = time; }
+function shuffleTick(dt){
+  if (SH.morphing) { SH.mix = Math.min(1, SH.mix + dt/3.5); if (SH.mix >= 1) { SH.a = SH.b; SH.mix = 0; SH.morphing = false; } }
+  else if (time - SH.lastSwitch > 22) shuffleNext();
+}
 function render(){
   const a = aspect(), Q = QUALS[S.quality];
   const segs = S.look === 'mandala' ? 8 + 4*Math.floor((beatCount/16) % 2) : S.look === 'mandala2' ? [6, 8, 12, 8][Math.floor(beatCount/32) % 4] : 6 + 2*Math.floor((beatCount/16) % 3);
   if (segs !== lastSegs && lastSegs) { const cp = P.copy.use(); cp.t('uTex', scene.read.tex).f('uMul', 1); blit(hold); fade = 1; }
   lastSegs = segs;
+  if (S.look === 'shuffle') shuffleTick(1/60);
   const p = P[S.look].use(); setPal(p); setTexel(p, scene.w, scene.h);
+  if (S.look === 'shuffle') {
+    const A_ = SH.a, B_ = SH.morphing ? SH.b : SH.a;
+    p.f('uTA', ...A_.T).f('uTB', ...B_.T).f('uPA0', ...A_.P0).f('uPA1', ...A_.P1).f('uPB0', ...B_.P0).f('uPB1', ...B_.P1)
+     .f('uSA', ...A_.SY).f('uSB', ...B_.SY).f('uMix', SH.morphing ? SH.mix : 0).f('uPx', 2/Math.min(scene.w, scene.h)).t('uWav', wavTex);
+  }
   p.t('uDye', dye.read.tex).t('uVel', vel.read.tex).t('uCoord', coord.read.tex).t('uPrev', scene.read.tex).t('uCam', C.on && camOK ? camTex[camIdx] : blackTex).t('uSpec', specTex);
   p.f('dyeTexel', dye.tx, dye.ty).f('uTime', time).f('uBass', A.bass).f('uMid', A.mid).f('uHigh', A.high).f('uLevel', A.level).f('uBassS', A.bassS || 0).f('uMidS', A.midS || 0).f('uBeat', beatPulse).f('uHue', hue).f('aspect', a)
    .f('uCamOn', C.on && camOK ? 1 : 0).f('uCamAspect', C.aspect).f('uMirror', C.mirror ? 1 : 0).f('uCamBlend', S.camBlend)
@@ -1164,7 +1273,7 @@ function toast(msg){ const t = $('#toast'); t.textContent = msg; t.classList.add
 window.addEventListener('keydown', e => {
   if (e.target.tagName === 'INPUT') return;
   const k = e.key.toLowerCase();
-  if (k >= '1' && k <= '6') setLook(LOOKS[+k - 1]);
+  if (k >= '1' && k <= '7') setLook(LOOKS[+k - 1]);
   else if (k === 'arrowright') nextLook(1); else if (k === 'arrowleft') nextLook(-1);
   else if (k === 'l') { const m = ['off','ghost','holo','glass','obstacle']; S.logoMode = m[(m.indexOf(S.logoMode) + 1) % m.length]; toast('Logo: ' + S.logoMode); }
   else if (k === 'c') { const m = ['off','user','environment']; S.cam = m[(m.indexOf(S.cam) + 1) % m.length]; S.cam === 'off' ? stopCam() : startCam(S.cam); }
@@ -1220,7 +1329,7 @@ window.addEventListener('resize', () => { if (S.pads) flashPads(); });
 updateUI();
 if ('serviceWorker' in navigator && location.protocol === 'https:') navigator.serviceWorker.register('sw.js').catch(()=>{});
 // test hook
-window.__HT = {advance, DBG, LOWP, gl, S, A, setLook, onBeat, hit, nextLook, updateUI, start: () => $('#go').click()};
+window.__HT = {shuffleNext, SH, advance, DBG, LOWP, gl, S, A, setLook, onBeat, hit, nextLook, updateUI, start: () => $('#go').click()};
 </script>
 </body>
 </html>
