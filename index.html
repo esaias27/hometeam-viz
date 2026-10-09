@@ -153,7 +153,7 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:22px;heigh
     <div class="hint">Drum pads split the screen into zones, each with its own color and hit. Autopilot changes looks every 32 beats.</div></div>
   <div class="sec"><h3>QUALITY</h3><div class="row" id="quals"></div></div>
   <div class="sec"><div class="row"><button class="pill" id="cleanBtn">CLEAN TV MODE</button><button class="pill" id="fsBtn">FULLSCREEN</button></div>
-    <div class="hint">Clean TV mode hides the menu button. Tap with three fingers to bring it back.<br>Keys: 1–5 looks · L logo · C camera · A autopilot · Space beat · H hide</div></div>
+    <div class="hint">Clean TV mode hides the menu button. Tap with three fingers to bring it back.<br>Keys: 1–6 looks · L logo · C camera · A autopilot · Space beat · H hide</div></div>
 </div>
 
 <div id="help"><div class="card">
@@ -178,12 +178,13 @@ gl.getExtension('EXT_color_buffer_half_float');
 gl.getExtension('OES_texture_float_linear');
 
 /* ---------------- settings ---------------- */
-const LOOKS = ['marble','ink','kaleido','mandala','fluid'];
-const LOOK_NAMES = {marble:'MARBLE', ink:'INK', kaleido:'KALEIDO', mandala:'MANDALA', fluid:'FLUID'};
+const LOOKS = ['marble','ink','kaleido','mandala','mandala2','fluid'];
+const LOOK_NAMES = {marble:'MARBLE', ink:'INK', kaleido:'KALEIDO', mandala:'MANDALA', mandala2:'MANDALA II', fluid:'FLUID'};
 const LOOK_PARAMS = {
-  marble:  {velDiss:0.9,  dyeDiss:1.6, curl:6,  noise:350,  noiseScale:1.6, buoy:0,    emitF:260,  emitDye:0.02, emitR:0.5, relax:0.012, splatDye:0.35},
+  marble:  {velDiss:0.9,  dyeDiss:1.6, curl:6,  noise:280,  noiseScale:1.6, buoy:0,    emitF:260,  emitDye:0.02, emitR:0.5, relax:0.018, splatDye:0.35},
   ink:     {velDiss:0.35, dyeDiss:0.30, curl:24, noise:160, noiseScale:2.5, buoy:-90,  emitF:160,  emitDye:0.03, emitR:0.35, relax:0, splatDye:0.5},
   kaleido: {velDiss:0.4,  dyeDiss:0.9, curl:30, noise:300,  noiseScale:2.0, buoy:0,    emitF:420, emitDye:0.06, emitR:0.35, relax:0, splatDye:0.45},
+  mandala2:{velDiss:0.6,  dyeDiss:1.4, curl:20, noise:250,  noiseScale:2.0, buoy:0,    emitF:300, emitDye:0.02, emitR:0.3, relax:0, splatDye:0.35},
   mandala: {velDiss:0.6,  dyeDiss:1.3, curl:20, noise:250,  noiseScale:2.0, buoy:0,    emitF:320, emitDye:0.025, emitR:0.3, relax:0, splatDye:0.4},
   fluid:   {velDiss:0.2,  dyeDiss:0.8, curl:32, noise:120,  noiseScale:2.0, buoy:0,    emitF:520, emitDye:0.05, emitR:0.3, relax:0, splatDye:0.5},
 };
@@ -301,7 +302,10 @@ FS.advect = LIB + `uniform sampler2D uVelocity, uSource, uLogo; uniform vec2 sim
 void main(){
   vec2 coord = vUv - dt*texture(uVelocity, vUv).xy*simTexel;
   vec4 r = texture(uSource, coord) / (1. + dissipation*dt);
-  if (uRelax > 0.) { float ed = min(min(vUv.x, 1.-vUv.x), min(vUv.y, 1.-vUv.y)); r = mix(r, vec4(vUv, 0., 1.), max(uRelax, 1. - smoothstep(0., .08, ed))); }
+  if (uRelax > 0.) {
+    float ed = min(min(vUv.x, 1. - vUv.x), min(vUv.y, 1. - vUv.y));
+    r = mix(r, vec4(vUv, 0., 1.), max(uRelax, 1. - smoothstep(0., .035, ed)));   // thin seam only; the pattern itself drifts freely
+  }
   if (uMask > .5) { vec2 t = logoUV(vUv, aspect); if (inBox(t)) { float sd = (texture(uLogo,t).g-.5)*uSdfScale - uDilate; r.rgb *= smoothstep(-.004,.006,sd); } }
   o = r;
 }`;
@@ -347,6 +351,7 @@ FS.camDye = LIB + `uniform sampler2D uDye, uCam, uFlow; uniform float aspect, uC
 
 /* ---------------- LOOKS (render to scene) ---------------- */
 const LOOKU = LIB + `uniform sampler2D uDye, uVel, uCoord, uPrev, uCam, uSpec; uniform vec2 dyeTexel;
+uniform float uBassS, uMidS;
 uniform float uTime, uBass, uMid, uHigh, uLevel, uBeat, uHue, aspect, uCamOn, uCamAspect, uMirror, uCamBlend, uSegs, uRot;
 vec2 camUV(vec2 uv){ vec2 p = uv-.5; float r = aspect/uCamAspect; if (r>1.) p.y/=r; else p.x*=r; p+=.5; if(uMirror>.5) p.x=1.-p.x; p.y=1.-p.y; return p; }
 vec3 psyCam(vec2 uv){ vec3 c = texture(uCam, camUV(uv)).rgb; float l = lum(c); return pal(l*1.6 + uHue + uTime*.04)*smoothstep(.04,.85,l)*1.15; }
@@ -366,10 +371,11 @@ FS.marble = LOOKU + `void main(){
   vec2 c = texture(uCoord, vUv).xy;
   vec2 p = (c-.5); p.x *= aspect; p *= 2.4;
   float t = uTime*.045;
+  float ra = uTime*.018; p = mat2(cos(ra),-sin(ra),sin(ra),cos(ra))*p + vec2(uTime*.05, sin(uTime*.031)*.6);
   vec2 q = vec2(fbm(p + vec2(0., t)), fbm(p + vec2(5.2, 1.3) - t));
   vec2 r = vec2(fbm(p + 3.*q + vec2(1.7, 9.2) + .15*t), fbm(p + 3.*q + vec2(8.3, 2.8) - .12*t));
-  float f = fbm(p + (2.4 + 1.6*uBass)*r);
-  float bands = f*2.6 + length(q)*1.3 + uHue + uMid*.15;
+  float f = fbm(p + (2.4 + 1.3*uBassS)*r);
+  float bands = f*2.6 + length(q)*1.3 + uHue + uMidS*.15;
   vec3 col = pal(bands);
   float vein = abs(sin(bands*6.28318*2.));
   col *= .55 + .6*smoothstep(0., .4, vein);
@@ -377,7 +383,7 @@ FS.marble = LOOKU + `void main(){
   col = mix(col, col*col*1.6, .25);
   col += texture(uDye, vUv).rgb*.55;
   if (uCamOn > .5) col = mix(col, max(col, psyCam(vUv)), uCamBlend);
-  o = vec4(col*(1.+.18*uBeat), 1.);
+  o = vec4(col*(1.+.05*uBeat), 1.);
 }`;
 FS.ink = LOOKU + `void main(){
   vec3 d = shadeDye(vUv);
@@ -434,6 +440,76 @@ FS.mandala = LOOKU + `void main(){
   col += tm(shadeDye(suv), 2.)*.85;
   if (uCamOn > .5) col = mix(col, max(col, psyCam(mirrorUV(vec2(q.x/aspect, q.y)*1.3+.5))), uCamBlend);
   o = vec4(col*(1. + .2*uBeat), 1.);
+}`;
+FS.mandala2 = LOOKU + `
+uniform float uZoomPh;
+mat2 rot2(float a){ float c = cos(a), s = sin(a); return mat2(c, -s, s, c); }
+float circ(vec2 u, vec2 c, float r){ return length(u - c) - r; }
+float lens(vec2 u, vec2 c, float off, float r){ return max(length(u - c - vec2(0., off)) - r, length(u - c + vec2(0., off)) - r); }
+float fillOf(float d){ return 1. - smoothstep(-.012, .012, d); }
+vec2 pfold(vec2 p, float n){ float r = length(p), a = atan(p.y, p.x), s = 6.28318/n; a = mod(a, s) - s*.5; return vec2(cos(a), abs(sin(a)))*r; }
+void main(){
+  vec2 p = vUv - .5; p.x *= aspect; p /= min(aspect, 1.)*.5;
+  p = rot2(uTime*.03 + uRot*.1)*p;
+  float r = length(p) + 1e-4, a = atan(p.y, p.x);
+  float N = uSegs;
+  // log-polar rings that endlessly flow inward: the mandala folds into itself
+  float per = .62;
+  float z = (log(r) + uZoomPh)/per;
+  float cell = floor(z), fx = fract(z);
+  float hw = (3.14159/N)/per;
+  float ay = a/per + mod(cell, 2.)*hw;
+  float yy = abs(mod(ay, 2.*hw) - hw);
+  vec2 u = vec2(fx, yy);
+  float s = texture(uSpec, vec2(mod(cell, 7.)/7.*.8 + .05, .5)).r;
+  float hc = cell*.11 + uHue;
+  vec3 cA = pal(hc), cB = pal(hc + .33), cC = pal(hc + .66);
+  vec3 col = cA*.025 + cC*.03*(1. - fx);
+  // big petal
+  float dP = lens(u, vec2(.5, 0.), .17, .4 + .05*s);
+  float fP = fillOf(dP);
+  col = mix(col, cA*(.35 + .9*clamp(-dP/.38, 0., 1.)), fP*.8);
+  col += cA*exp(-abs(dP)*70.)*(.5 + .9*s);
+  // translucent side lobes from the neighbouring sector
+  float dL = lens(u - vec2(.6, hw), vec2(0.), .12, .3 + .04*s);
+  float fL = fillOf(dL);
+  col = mix(col, col*.55 + cB*.65, fL*.55);
+  col += cB*exp(-abs(dL)*80.)*.7;
+  // inner heart
+  float dH = min(circ(u, vec2(.24, .05), .07 + .03*s), circ(u, vec2(.24, -.05), .07 + .03*s));
+  col = mix(col, mix(cC, vec3(1.), .45), fillOf(dH)*.8);
+  col += cC*exp(-abs(dH)*90.)*.6;
+  // filigree inside petals
+  vec2 q = u*vec2(3., 3.); float tr = 1e3;
+  for (int i = 0; i < 4; i++) { q = abs(q) - vec2(.7, .35); q = rot2(.55 + .1*sin(uTime*.2))*q*1.45; tr = min(tr, abs(length(q) - .45)); }
+  col += cC*exp(-tr*10.)*.35*(fP + fL*.6)*(.6 + s);
+  col += cB*exp(-tr*14.)*.14*(1. - fP)*(1. - fL);
+  // second, smaller petal ring between the big ones
+  float dS = lens(u - vec2(.12, hw*.55), vec2(0.), .06, .12 + .03*s);
+  col = mix(col, cB*.9, fillOf(dS)*.7); col += mix(cB, vec3(1.), .4)*exp(-abs(dS)*120.)*.6;
+  float fil = abs(sin(u.x*26. - u.y*9. + uTime*.6));
+  col += cB*pow(1. - fil, 14.)*fP*.35;
+  // scalloped ring + spokes
+  float sc = abs(fx - .05 - .035*cos(yy/hw*6.28318));
+  col += mix(cC, vec3(1.), .3)*exp(-sc*90.)*(.6 + .8*s);
+  col += cB*exp(-(hw - yy)*60.)*.18*(1. - fP);
+  // jewels + dotted ring
+  float dJ = min(circ(u, vec2(0., hw), .06 + .025*s), circ(u, vec2(1., hw), .06 + .025*s));
+  col = mix(col, mix(cC, vec3(1.), .6), fillOf(dJ));
+  col += cC*exp(-max(dJ, 0.)*28.)*.4*(1. + uHigh);
+  float dd = length(vec2(fx - .9, mod(yy, hw/3.) - hw/6.)) - .022;
+  col += mix(cB, vec3(1.), .5)*fillOf(dd)*.8;
+  // fade the infinitely small rings near the centre into a glowing star
+  float cen = smoothstep(.015, .16, r);
+  col *= cen;
+  float star = exp(-r*(10. + 8.*abs(cos(a*N*.5))));
+  col += pal(uHue + uTime*.05)*star*(.9 + 1.6*uBassS) + vec3(1.)*exp(-r*30.)*.4;
+  // taps / camera folded in
+  vec2 fq = pfold((vUv - .5)*vec2(aspect, 1.), N); vec2 suv = mirrorUV(vec2(fq.x/aspect, fq.y) + .5);
+  col += tm(shadeDye(suv), 2.)*.45;
+  if (uCamOn > .5) col = mix(col, max(col, psyCam(suv)), uCamBlend);
+  col = tm(col, 1.3);
+  o = vec4(col*(1. + .1*uBeat), 1.);
 }`;
 FS.fluid = LOOKU + `void main(){
   vec3 c = tm(shadeDye(vUv), 2.4);
@@ -765,6 +841,8 @@ function analyze(dt, now){
   const sm = (a, b, k) => a + (b - a)*Math.min(1, dt*k*sk);
   A.bass = sm(A.bass, norm[0], 18); A.mid = sm(A.mid, (norm[1] + norm[2])*.5, 12); A.high = sm(A.high, norm[3], 14);
   A.level = sm(A.level, (norm[0] + norm[1] + norm[2] + norm[3])/4, 6);
+  A.bassS = sm(A.bassS || 0, norm[0], 1.6); A.midS = sm(A.midS || 0, (norm[1] + norm[2])*.5, 1.4);
+  kick = sm(kick, kickT, 3.5); kickT *= Math.exp(-dt*1.2);
   // beat: bass energy vs ~1s average
   const e = raw[0]; A.hist.push(e); if (A.hist.length > 50) A.hist.shift();
   const avg = A.hist.reduce((s, x) => s + x, 0)/A.hist.length;
@@ -811,6 +889,7 @@ function uploadCam(){
 /* ---------------- interaction ---------------- */
 const ptrs = new Map();
 const ripples = new Float32Array(32); let ripIdx = 0;
+let kick = 0, kickT = 0, zoomPh = 0;
 let time = 0, beatPulse = 0, flash = 0, hue = 0, rot = 0, beatCount = 0, fade = 0, lastUI = 0;
 function addRipple(x, y, s){ ripples.set([x, y, time, s], ripIdx*4); ripIdx = (ripIdx + 1) % 8; }
 const PAD_FX = ['BURST','SPIN ⟳','SPIN ⟲','DROP','RING','SPARK'];
@@ -866,9 +945,10 @@ function emit(dt){
   const bands = [A.bass, A.mid, A.high];
   for (let i = 0; i < 3; i++) {
     const b = bands[i]; if (b < .06) continue;
-    const ph = time*(.16 + .07*i) + i*2.1;
-    let x = .5 + .33*Math.sin(ph*1.3 + i), y = .5 + .33*Math.cos(ph*.9 + i*1.7);
-    let dx = 1.3*.33*Math.cos(ph*1.3 + i), dy = -.9*.33*Math.sin(ph*.9 + i*1.7);
+    const ph = time*(.16 + .07*i)*(S.look === 'marble' ? 1.6 : 1) + i*2.1;
+    const w1 = 1.3 + .37*i, w2 = .9 + .23*i, w3 = 2.7 - .4*i, w4 = 2.1 + .3*i;
+    let x = .5 + .3*Math.sin(ph*w1 + i) + .12*Math.sin(ph*w3 + 2.3*i), y = .5 + .3*Math.cos(ph*w2 + i*1.7) + .12*Math.cos(ph*w4 + 1.1*i);
+    let dx = .3*w1*Math.cos(ph*w1 + i) + .12*w3*Math.cos(ph*w3 + 2.3*i), dy = -.3*w2*Math.sin(ph*w2 + i*1.7) - .12*w4*Math.sin(ph*w4 + 1.1*i);
     if (S.look === 'ink') { y = .82 + .08*Math.sin(ph); dy = -.25; dx *= .4; }
     const m = Math.hypot(dx, dy) + 1e-4, f = L.emitF*b*(i === 0 ? 1.4 : 1);
     const col = palRGB(hue + i*.28 + time*.02).map(c => c*L.emitDye*b*Math.min(2, dt*60));
@@ -877,13 +957,14 @@ function emit(dt){
 }
 function onBeat(s){
   if (s <= 0.01) { beatCount++; if (S.auto && beatCount % 32 === 0) nextLook(1, true); return; }
-  beatPulse = 1; flash = Math.max(flash, s); hue += .02 + .03*s; beatCount++;
+  beatPulse = 1; flash = Math.max(flash, S.look === 'marble' ? s*.3 : s); hue += .02 + .03*s; beatCount++;
   const L = LOOK_PARAMS[S.look], R = Math.random;
   const col = () => palRGB(hue + R()*.6).map(c => c*L.splatDye*(.8 + s));
   switch (S.look) {
-    case 'marble': splat(.5 + (R()-.5)*.5, .5 + (R()-.5)*.5, 0, 0, null, .9, 1, 300 + 350*s); if (beatCount % 4 === 0) splat(.5, .5, 0, 0, null, 1.2, 2, (R() > .5 ? 1 : -1)*300); break;
+    case 'marble': kickT = Math.min(1.5, kickT + .35*s); if (beatCount % 8 === 0) splat(.25 + R()*.5, .25 + R()*.5, 0, 0, null, 2.2, 2, (R() > .5 ? 1 : -1)*(90 + 90*s)); break;
     case 'ink': { const n = 1 + (s > .7 ? 1 : 0); for (let k = 0; k < n; k++) splat(.15 + R()*.7, .92, (R()-.5)*60, -160 - 200*s, col().map(c => c*1.8), .55); break; }
     case 'kaleido': case 'fluid': { const n = 2 + Math.round(s*3); for (let k = 0; k < n; k++) { const a = R()*6.283, f = 450 + 650*s; splat(.2 + R()*.6, .2 + R()*.6, Math.cos(a)*f, Math.sin(a)*f, col(), .25 + R()*.35); } break; }
+    case 'mandala2': kickT = Math.min(1.5, kickT + .3*s); splat(.5, .5, 0, 0, col().map(c => c*.5), .3, 1, 300*s + 120); break;
     case 'mandala': splat(.5, .5, 0, 0, col().map(c => c*.7), .35, beatCount % 2 ? 1 : 2, 600*s + 250); break;
   }
   if (S.auto && beatCount % 32 === 0) nextLook(1, true);
@@ -899,7 +980,7 @@ function step(dt){
   const obstacle = S.flow && S.logoMode !== 'off' && LOGO.ready;
   p = P.forces.use(); setTexel(p, vel.w, vel.h); setLogoU(p);
   p.t('uVelocity', vel.read.tex).t('uDye', dye.read.tex).t('uLogo', LOGO.tex || blackTex)
-   .f('dt', dt).f('uNoise', L.noise*(.35 + 1.4*A.bass + .6*A.level)*(DBG.noise ?? 1)).f('uNoiseScale', L.noiseScale).f('uTime', time).f('uBuoy', L.buoy)
+   .f('dt', dt).f('uNoise', L.noise*(.35 + 1.2*(A.bassS || 0) + .4*A.level + (S.look === 'marble' ? .6 : 1.5)*kick)*(DBG.noise ?? 1)).f('uNoiseScale', L.noiseScale).f('uTime', time).f('uBuoy', L.buoy)
    .f('uObstacle', obstacle ? 1 : 0).f('aspect', a).f('uDilate', .012);
   blit(vel.write); vel.swap();
   if (C.on && camOK && S.camPush > 0) {
@@ -930,13 +1011,17 @@ function step(dt){
 let camOK = false;
 const DBG = {};
 
+let lastSegs = 0;
 function render(){
   const a = aspect(), Q = QUALS[S.quality];
+  const segs = S.look === 'mandala' ? 8 + 4*Math.floor((beatCount/16) % 2) : S.look === 'mandala2' ? [6, 8, 12, 8][Math.floor(beatCount/32) % 4] : 6 + 2*Math.floor((beatCount/16) % 3);
+  if (segs !== lastSegs && lastSegs) { const cp = P.copy.use(); cp.t('uTex', scene.read.tex).f('uMul', 1); blit(hold); fade = 1; }
+  lastSegs = segs;
   const p = P[S.look].use(); setPal(p); setTexel(p, scene.w, scene.h);
   p.t('uDye', dye.read.tex).t('uVel', vel.read.tex).t('uCoord', coord.read.tex).t('uPrev', scene.read.tex).t('uCam', C.on && camOK ? camTex[camIdx] : blackTex).t('uSpec', specTex);
-  p.f('dyeTexel', dye.tx, dye.ty).f('uTime', time).f('uBass', A.bass).f('uMid', A.mid).f('uHigh', A.high).f('uLevel', A.level).f('uBeat', beatPulse).f('uHue', hue).f('aspect', a)
+  p.f('dyeTexel', dye.tx, dye.ty).f('uTime', time).f('uBass', A.bass).f('uMid', A.mid).f('uHigh', A.high).f('uLevel', A.level).f('uBassS', A.bassS || 0).f('uMidS', A.midS || 0).f('uBeat', beatPulse).f('uHue', hue).f('aspect', a)
    .f('uCamOn', C.on && camOK ? 1 : 0).f('uCamAspect', C.aspect).f('uMirror', C.mirror ? 1 : 0).f('uCamBlend', S.camBlend)
-   .f('uSegs', S.look === 'mandala' ? 8 + 4*Math.floor((beatCount/16) % 2) : 6 + 2*Math.floor((beatCount/16) % 3)).f('uRot', rot);
+   .f('uSegs', segs).f('uRot', rot).f('uZoomPh', zoomPh);
   blit(scene.write); scene.swap();
   let bloomAmt = 0;
   if (Q.bloom) {
@@ -946,7 +1031,7 @@ function render(){
       b.unit = 0; b.t('uTex', bloomA.tex).f('uDir', bloomA.tx, 0); blit(bloomB);
       b.unit = 0; b.t('uTex', bloomB.tex).f('uDir', 0, bloomA.ty); blit(bloomA);
     }
-    bloomAmt = (S.look === 'marble' ? .35 : .7)*(1 + .6*A.bass);
+    bloomAmt = S.look === 'marble' ? .35*(1 + .4*(A.bassS || 0)) : .7*(1 + .6*A.bass);
   }
   const c = P.composite.use(); setPal(c); setLogoU(c); setTexel(c, gl.drawingBufferWidth, gl.drawingBufferHeight);
   const logoModeN = {off:-1, obstacle:0, ghost:1, holo:2, glass:3}[S.logoMode];
@@ -991,6 +1076,7 @@ function tick(dt, now){
   beatPulse *= Math.exp(-dt*5*(1 - S.smooth*.7)); flash *= Math.exp(-dt*7); fade = Math.max(0, fade - dt/1.4);
   hue += dt*(.012 + .03*A.level);
   rot += dt*(.05 + .25*A.mid);
+  zoomPh += dt*(.07 + .12*(A.bassS || 0) + .45*kick);
   const newCam = uploadCam(); camOK = newCam !== false;
   if (camOK && newCam === 'new') {
     const fp = P.camFlow.use(); setTexel(fp, flowF.w, flowF.h);
@@ -1062,7 +1148,7 @@ function toast(msg){ const t = $('#toast'); t.textContent = msg; t.classList.add
 window.addEventListener('keydown', e => {
   if (e.target.tagName === 'INPUT') return;
   const k = e.key.toLowerCase();
-  if (k >= '1' && k <= '5') setLook(LOOKS[+k - 1]);
+  if (k >= '1' && k <= '6') setLook(LOOKS[+k - 1]);
   else if (k === 'arrowright') nextLook(1); else if (k === 'arrowleft') nextLook(-1);
   else if (k === 'l') { const m = ['off','ghost','holo','glass','obstacle']; S.logoMode = m[(m.indexOf(S.logoMode) + 1) % m.length]; toast('Logo: ' + S.logoMode); }
   else if (k === 'c') { const m = ['off','user','environment']; S.cam = m[(m.indexOf(S.cam) + 1) % m.length]; S.cam === 'off' ? stopCam() : startCam(S.cam); }
