@@ -1117,7 +1117,7 @@ function step(dt){
 let camOK = false;
 const DBG = {};
 
-let lastSegs = 0;
+let lastSegs = 0, lastLook = '', fadeTime = 1.4;
 /* ---- SHUFFLE preset engine: random combos of flow fields, audio shapes, symmetry ---- */
 function randPreset(){
   const R = Math.random, sgn = () => R() < .5 ? -1 : 1;
@@ -1133,9 +1133,10 @@ function shuffleTick(dt){
 }
 function render(){
   const a = aspect(), Q = QUALS[S.quality];
-  const segs = S.look === 'mandala' ? 8 + 4*Math.floor((beatCount/16) % 2) : S.look === 'mandala2' ? [6, 8, 12, 8][Math.floor(beatCount/32) % 4] : 6 + 2*Math.floor((beatCount/16) % 3);
-  if (segs !== lastSegs && lastSegs) { const cp = P.copy.use(); cp.t('uTex', scene.read.tex).f('uMul', 1); blit(hold); fade = 1; }
-  lastSegs = segs;
+  const symLook = S.look === 'kaleido' || S.look === 'mandala' || S.look === 'mandala2';
+  const segs = S.look === 'mandala' ? 8 + 4*Math.floor((beatCount/64) % 2) : S.look === 'mandala2' ? [6, 8, 12, 8][Math.floor(beatCount/64) % 4] : 6 + 2*Math.floor((beatCount/64) % 3);
+  if (symLook && segs !== lastSegs && lastSegs && lastLook === S.look) { const cp = P.copy.use(); cp.t('uTex', scene.read.tex).f('uMul', 1); blit(hold); fade = 1; fadeTime = 3; }
+  lastSegs = segs; lastLook = S.look;
   if (S.look === 'shuffle') shuffleTick(1/60);
   const p = P[S.look].use(); setPal(p); setTexel(p, scene.w, scene.h);
   if (S.look === 'shuffle') {
@@ -1172,7 +1173,7 @@ function render(){
 function setLook(name, auto){
   if (name === S.look) return;
   // capture current frame for crossfade
-  const p = P.copy.use(); p.t('uTex', scene.read.tex).f('uMul', 1); blit(hold); fade = 1;
+  const p = P.copy.use(); p.t('uTex', scene.read.tex).f('uMul', 1); blit(hold); fade = 1; fadeTime = 1.4;
   S.look = name; save(); updateUI();
   if (name === 'marble') { const q = P.initCoord.use(); setTexel(q, coord.w, coord.h); blit(coord.read); }
   showLookName();
@@ -1198,7 +1199,7 @@ function tick(dt, now){
   resize();
   analyze(dt, now);
   if (A.beat) onBeat(A.beatStr*S.hits);
-  beatPulse *= Math.exp(-dt*5*(1 - S.smooth*.7)); flash *= Math.exp(-dt*7); fade = Math.max(0, fade - dt/1.4);
+  beatPulse *= Math.exp(-dt*5*(1 - S.smooth*.7)); flash *= Math.exp(-dt*7); fade = Math.max(0, fade - dt/fadeTime);
   hue += dt*(.012 + .03*A.level);
   rot += dt*(.05 + .25*A.mid);
   zoomPh += dt*(.07 + .12*(A.bassS || 0) + .45*kick);
