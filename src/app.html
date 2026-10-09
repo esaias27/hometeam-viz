@@ -1331,7 +1331,7 @@ $('#go').addEventListener('click', async () => {
 });
 window.addEventListener('resize', () => { if (S.pads) flashPads(); });
 updateUI();
-if ('serviceWorker' in navigator && location.protocol === 'https:') navigator.serviceWorker.register('sw.js').catch(()=>{});
+if ('serviceWorker' in navigator && (location.protocol === 'https:' || location.hostname === 'localhost' || location.hostname === '127.0.0.1')) navigator.serviceWorker.register('sw.js').catch(()=>{});
 // test hook
 window.__HT = {shuffleNext, SH, advance, DBG, LOWP, gl, S, A, setLook, onBeat, hit, nextLook, updateUI, start: () => $('#go').click()};
 </script>
