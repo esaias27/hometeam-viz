@@ -133,14 +133,22 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:22px;heigh
   <div class="sec"><h3>COLOR</h3><div class="row" id="pals"></div></div>
   <div class="sec"><h3>LOGO</h3><div class="row" id="logoModes"></div>
     <div class="row" style="margin-top:6px"><button class="pill" id="flowBtn">FLOW AROUND</button>
-      <label class="slider">SIZE <input type="range" id="logoSize" min="0.2" max="0.9" step="0.01" value="0.48"></label></div></div>
+      <label class="slider">SIZE <input type="range" data-k="logoSize" min="0.2" max="0.9" step="0.01"></label></div></div>
   <div class="sec"><h3>CAMERA</h3><div class="row" id="camModes"></div>
-    <div class="row" style="margin-top:6px" id="camFx"></div>
-    <div class="row"><label class="slider">BLEND <input type="range" id="camBlend" min="0" max="1" step="0.01" value="0.35"></label></div></div>
+    <div class="row"><label class="slider">EDGES <input type="range" data-k="camEdges" min="0" max="1.5" step="0.01"></label></div>
+    <div class="row"><label class="slider">EDGE DETAIL <input type="range" data-k="camDetail" min="0" max="1" step="0.01"></label></div>
+    <div class="row"><label class="slider">WARP <input type="range" data-k="camWarp" min="0" max="2" step="0.01"></label></div>
+    <div class="row"><label class="slider">FLUID PUSH <input type="range" data-k="camPush" min="0" max="2" step="0.01"></label></div>
+    <div class="row"><label class="slider">PAINT <input type="range" data-k="camPaint" min="0" max="2" step="0.01"></label></div>
+    <div class="row"><label class="slider">COLOR FILL <input type="range" data-k="camBlend" min="0" max="1" step="0.01"></label></div>
+    <div class="hint">Edges outline the people on camera and glow brighter where they move. Warp bends the visuals with your motion, Fluid Push shoves the liquid, and Paint leaves trails of color.</div></div>
   <div class="sec"><h3>AUDIO</h3>
     <div class="row"><div class="meter"><b id="m0"></b><b id="m1"></b><b id="m2"></b><b id="m3"></b></div><span id="micStat">—</span>
       <button class="pill" id="demoBtn" style="margin-left:auto">DEMO GROOVE</button></div>
-    <div class="row"><label class="slider">SENSITIVITY <input type="range" id="sens" min="0.3" max="2.5" step="0.01" value="1.1"></label></div></div>
+    <div class="row"><label class="slider">SENSITIVITY <input type="range" data-k="sens" min="0.3" max="2.5" step="0.01"></label></div>
+    <div class="row"><label class="slider">SMOOTHING <input type="range" data-k="smooth" min="0" max="1" step="0.01"></label></div>
+    <div class="row"><label class="slider">BEAT HITS <input type="range" data-k="hits" min="0" max="1.5" step="0.01"></label></div>
+    <div class="hint">Smoothing: left = snappy and twitchy, right = slow and flowing. Beat Hits sets how hard each detected beat splashes; at 0 it stays calm.</div></div>
   <div class="sec"><h3>TOUCH</h3><div class="row"><button class="pill" id="padsBtn">DRUM PADS</button><button class="pill" id="autoBtn">AUTOPILOT</button></div>
     <div class="hint">Drum pads split the screen into zones, each with its own color and hit. Autopilot changes looks every 32 beats.</div></div>
   <div class="sec"><h3>QUALITY</h3><div class="row" id="quals"></div></div>
@@ -194,7 +202,7 @@ const QUALS = {
   max:    {name:'MAX',           dpr:2.0,  sim:160, dye:1024, iters:22, bloom:true,  fps:60, scene:1.0},
 };
 const S = { // live state
-  look:'marble', pal:1, logoMode:'holo', flow:true, logoSize:0.48, cam:'off', camFx:'motion', camBlend:0.35,
+  look:'marble', pal:1, logoMode:'holo', flow:true, logoSize:0.48, cam:'off', camBlend:0.15, camEdges:0.85, camDetail:0.5, camPush:0.6, camPaint:0.25, camWarp:0.5, smooth:0.35, hits:1.0,
   sens:1.1, demo:false, pads:false, auto:false, quality:'normal', clean:false
 };
 try { Object.assign(S, JSON.parse(localStorage.getItem('ht-viz')||'{}')); } catch(e){}
@@ -297,29 +305,44 @@ void main(){
   if (uMask > .5) { vec2 t = logoUV(vUv, aspect); if (inBox(t)) { float sd = (texture(uLogo,t).g-.5)*uSdfScale - uDilate; r.rgb *= smoothstep(-.004,.006,sd); } }
   o = r;
 }`;
-/* camera -> fluid: optical-flow-ish push + color injection */
-FS.camVel = LIB + `uniform sampler2D uVelocity, uCam, uCamPrev; uniform float aspect, uCamAspect, uMirror, uForce; uniform vec2 camTexel;
-vec2 camUV(vec2 uv){ vec2 p = uv-.5; float r = aspect/uCamAspect; if (r>1.) p.y/=r; else p.x*=r; p+=.5; if(uMirror>.5) p.x=1.-p.x; p.y=1.-p.y; return p; }
+/* camera: Lucas-Kanade optical flow (camera space) + consumers */
+const CAMUV = `vec2 camUV(vec2 uv){ vec2 p = uv-.5; float r = aspect/uCamAspect; if (r>1.) p.y/=r; else p.x*=r; p+=.5; if(uMirror>.5) p.x=1.-p.x; p.y=1.-p.y; return p; }
+vec2 flowToScreen(vec2 f){ return vec2(uMirror>.5 ? -f.x : f.x, -f.y); }
+`;
+FS.camFlow = LIB + `uniform sampler2D uCam, uCamPrev, uPrevFlow; uniform vec2 flowTexel; uniform float uSmooth, uNoise;
+float Lc(vec2 p){ return lum(texture(uCam, p).rgb); }
+float Lp(vec2 p){ return lum(texture(uCamPrev, p).rgb); }
 void main(){
-  vec2 c = camUV(vUv);
-  float I = lum(texture(uCam,c).rgb), P = lum(texture(uCamPrev,c).rgb);
-  vec2 e = camTexel*2.;
-  vec2 g = vec2(lum(texture(uCam,c+vec2(e.x,0)).rgb)-lum(texture(uCam,c-vec2(e.x,0)).rgb), lum(texture(uCam,c-vec2(0,e.y)).rgb)-lum(texture(uCam,c+vec2(0,e.y)).rgb));
-  if (uMirror>.5) g.x = -g.x;
-  float It = I - P;
-  vec2 flow = -It*g/(dot(g,g)+.004);
-  float m = smoothstep(.04,.18,abs(It));
-  vec2 v = texture(uVelocity, vUv).xy + clamp(flow,-1.,1.)*uForce*m;
-  o = vec4(v, 0., 1.);
+  float a = 0., b = 0., c = 0., d = 0., f = 0., en = 0.;
+  vec2 dx = vec2(flowTexel.x, 0.), dy = vec2(0., flowTexel.y);
+  for (int j = -1; j <= 1; j++) for (int i = -1; i <= 1; i++) {
+    vec2 p = vUv + vec2(float(i), float(j))*flowTexel;
+    float Ix = .25*(Lc(p+dx) - Lc(p-dx) + Lp(p+dx) - Lp(p-dx));
+    float Iy = .25*(Lc(p+dy) - Lc(p-dy) + Lp(p+dy) - Lp(p-dy));
+    float It = Lc(p) - Lp(p);
+    a += Ix*Ix; b += Iy*Iy; c += Ix*Iy; d += Ix*It; f += Iy*It; en += abs(It);
+  }
+  float lam = .0015;
+  a += lam; b += lam;
+  float det = a*b - c*c;
+  vec2 v = -vec2(b*d - c*f, a*f - c*d)/det;
+  float len = length(v); if (len > 4.) v *= 4./len;
+  v *= smoothstep(uNoise, uNoise*3. + .01, en/9.);
+  vec2 pv = texture(uPrevFlow, vUv).xy;
+  v = mix(v, pv, uSmooth);
+  o = vec4(v, length(v), 1.);
 }`;
-FS.camDye = LIB + `uniform sampler2D uDye, uCam, uCamPrev; uniform float aspect, uCamAspect, uMirror, uAmt, uTime, uHue;
-vec2 camUV(vec2 uv){ vec2 p = uv-.5; float r = aspect/uCamAspect; if (r>1.) p.y/=r; else p.x*=r; p+=.5; if(uMirror>.5) p.x=1.-p.x; p.y=1.-p.y; return p; }
-void main(){
+FS.camVel = LIB + `uniform sampler2D uVelocity, uFlow; uniform float aspect, uCamAspect, uMirror, uForce;
+` + CAMUV + `void main(){
+  vec2 fl = flowToScreen(texture(uFlow, camUV(vUv)).xy);
+  o = vec4(texture(uVelocity, vUv).xy + fl*uForce, 0., 1.);
+}`;
+FS.camDye = LIB + `uniform sampler2D uDye, uCam, uFlow; uniform float aspect, uCamAspect, uMirror, uAmt, uTime, uHue;
+` + CAMUV + `void main(){
   vec2 c = camUV(vUv);
-  vec3 cam = texture(uCam,c).rgb; float It = abs(lum(cam) - lum(texture(uCamPrev,c).rgb));
-  float m = smoothstep(.05,.25,It);
+  vec3 cam = texture(uCam, c).rgb; float m = smoothstep(.15, 1.2, texture(uFlow, c).z);
   vec3 col = pal(lum(cam)*1.4 + uHue + uTime*.03);
-  o = vec4(texture(uDye,vUv).rgb + col*m*uAmt, 1.);
+  o = vec4(texture(uDye, vUv).rgb + col*m*uAmt, 1.);
 }`;
 
 /* ---------------- LOOKS (render to scene) ---------------- */
@@ -429,9 +452,10 @@ FS.blur = `uniform sampler2D uTex; uniform vec2 uDir; void main(){
   c += (texture(uTex, vUv + uDir*3.231).rgb + texture(uTex, vUv - uDir*3.231).rgb)*.070;
   o = vec4(c, 1.); }`;
 /* final composite: ripples, logo, bloom, crossfade */
-FS.composite = LIB + `uniform sampler2D uScene, uBloom, uLogo, uHold; uniform float aspect, uTime, uBass, uHigh, uBeat, uHue, uBloomAmt, uFade, uLogoMode, uLogoVis, uFlash;
+FS.composite = LIB + `uniform sampler2D uScene, uBloom, uLogo, uHold, uCam, uFlow; uniform float uCamOn, uCamAspect, uMirror, uEdges, uEdgeDetail, uWarp, uMid; uniform float aspect, uTime, uBass, uHigh, uBeat, uHue, uBloomAmt, uFade, uLogoMode, uLogoVis, uFlash;
 uniform vec4 uRip[8]; uniform vec2 sceneTexel;
 float sdAt(vec2 t){ return (texture(uLogo, t).g - .5)*uSdfScale; }
+` + CAMUV + `
 void main(){
   vec2 uv = vUv;
   // touch ripples
@@ -446,6 +470,9 @@ void main(){
   }
   off.x /= aspect;
   uv += off;
+  // camera: optical-flow displacement
+  vec2 cuvCam = camUV(vUv); vec3 flw = vec3(0.);
+  if (uCamOn > .5) { flw = texture(uFlow, cuvCam).xyz; vec2 fs = flowToScreen(flw.xy); uv -= fs*uWarp*.012*vec2(1., 1.); }
   // logo
   vec2 t = logoUV(vUv, aspect);
   float m = 0., sd = 1.; vec2 n = vec2(0.);
@@ -459,8 +486,7 @@ void main(){
   vec3 col;
   if (inL && uLogoMode > 2.5 && uLogoMode < 3.5) {          // GLASS
     float bevel = 1. - smoothstep(-.02, 0., -sd);           // 1 at edge, falls inside
-    float inside = smoothstep(.003, -.003, -(-sd));
-    inside = 1. - smoothstep(-.002, .002, sd);
+    float inside = 1. - smoothstep(-.002, .002, sd);
     vec2 refr = -n*(.03 + .03*uBass)*bevel*inside;
     refr.x /= aspect;
     vec2 cuv = uv + refr + (uv - uLogoC)*(-.06)*inside;
@@ -475,6 +501,24 @@ void main(){
   }
   if (uBloomAmt > 0.) col += texture(uBloom, uv).rgb*uBloomAmt;
   col = mix(col, texture(uHold, vUv).rgb, uFade);
+  // camera: colorful edge-detect layer, brighter where people move
+  if (uCamOn > .5 && uEdges > 0.) {
+    vec2 tx = vec2(1./320., 1./240.)*mix(2.2, .7, uEdgeDetail);
+    float tl = lum(texture(uCam, cuvCam + tx*vec2(-1, -1)).rgb), tc = lum(texture(uCam, cuvCam + tx*vec2(0, -1)).rgb), tr = lum(texture(uCam, cuvCam + tx*vec2(1, -1)).rgb);
+    float ml = lum(texture(uCam, cuvCam + tx*vec2(-1, 0)).rgb), mr = lum(texture(uCam, cuvCam + tx*vec2(1, 0)).rgb);
+    float bl = lum(texture(uCam, cuvCam + tx*vec2(-1, 1)).rgb), bc = lum(texture(uCam, cuvCam + tx*vec2(0, 1)).rgb), br = lum(texture(uCam, cuvCam + tx*vec2(1, 1)).rgb);
+    float gx = (tr + 2.*mr + br) - (tl + 2.*ml + bl);
+    float gy = (bl + 2.*bc + br) - (tl + 2.*tc + tr);
+    float mag = length(vec2(gx, gy));
+    float thr = mix(.55, .12, uEdgeDetail);
+    float e = smoothstep(thr, thr + .25, mag);
+    float motion = smoothstep(.1, 1.5, flw.z);
+    vec3 ec = pal(atan(gy, gx)/6.28318 + uHue + uTime*.06 + mag*.3);
+    ec = mix(ec, vec3(1.), .15*motion);
+    vec3 layer = ec*e*uEdges*(.75 + .9*motion + .5*uBass);
+    col = 1. - (1. - clamp(col, 0., 1.))*(1. - clamp(layer, 0., 1.));
+    col += pal(uHue + .5 + uTime*.1)*motion*uEdges*.18;
+  }
   if (inL) {
     if (uLogoMode > .5 && uLogoMode < 1.5) {                 // GHOST outline
       float edge = exp(-abs(sd)*260.);
@@ -622,6 +666,7 @@ const specTex = makeTex(SPEC_N, 1, gl.R8, gl.RED, gl.UNSIGNED_BYTE, gl.LINEAR);
 const specData = new Uint8Array(SPEC_N);
 const camTex = [makeTex(2,2,gl.RGBA8,gl.RGBA,gl.UNSIGNED_BYTE,gl.LINEAR), makeTex(2,2,gl.RGBA8,gl.RGBA,gl.UNSIGNED_BYTE,gl.LINEAR)];
 let camIdx = 0;
+let flowF = null;
 
 /* ---------------- sim buffers ---------------- */
 let vel, dye, coord, pres, divg, curlT, scene, hold, bloomA, bloomB, sizes = {};
@@ -639,6 +684,7 @@ function allocate(){
   scene = dfbo(sw, sh); hold = fbo(sw, sh);
   bloomA = fbo(Math.max(1, sw>>2), Math.max(1, sh>>2)); bloomB = fbo(bloomA.w, bloomA.h);
   P.initCoord.use(); setTexel(P.initCoord, coord.w, coord.h); blit(coord.read); blit(coord.write);
+  if (!flowF) flowF = dfbo(160, 120);
 }
 function resize(){
   const Q = QUALS[S.quality];
@@ -714,7 +760,9 @@ function analyze(dt, now){
     const n = (v - A.floors[i]*.85)/Math.max(A.peaks[i] - A.floors[i]*.85, .03);
     return Math.max(0, Math.min(1.2, n*S.sens));
   });
-  const sm = (a, b, k) => a + (b - a)*Math.min(1, dt*k);
+  const sk = 1 - S.smooth*.93;
+  if (A.an) A.an.smoothingTimeConstant = .3 + .6*S.smooth;
+  const sm = (a, b, k) => a + (b - a)*Math.min(1, dt*k*sk);
   A.bass = sm(A.bass, norm[0], 18); A.mid = sm(A.mid, (norm[1] + norm[2])*.5, 12); A.high = sm(A.high, norm[3], 14);
   A.level = sm(A.level, (norm[0] + norm[1] + norm[2] + norm[3])/4, 6);
   // beat: bass energy vs ~1s average
@@ -750,13 +798,14 @@ function stopCam(){ if (C.stream) C.stream.getTracks().forEach(t => t.stop()); C
 function uploadCam(){
   if (!C.on || !C.video || C.video.readyState < 2 || !C.video.videoWidth) return false;
   if (C.video.currentTime === C.last) return true;
+  const fresh = 'new';
   C.last = C.video.currentTime;
   camIdx ^= 1;
   gl.bindTexture(gl.TEXTURE_2D, camTex[camIdx]);
   gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, false);
   gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA8, gl.RGBA, gl.UNSIGNED_BYTE, C.video);
   C.aspect = C.video.videoWidth / C.video.videoHeight;
-  return true;
+  return fresh;
 }
 
 /* ---------------- interaction ---------------- */
@@ -827,6 +876,7 @@ function emit(dt){
   }
 }
 function onBeat(s){
+  if (s <= 0.01) { beatCount++; if (S.auto && beatCount % 32 === 0) nextLook(1, true); return; }
   beatPulse = 1; flash = Math.max(flash, s); hue += .02 + .03*s; beatCount++;
   const L = LOOK_PARAMS[S.look], R = Math.random;
   const col = () => palRGB(hue + R()*.6).map(c => c*L.splatDye*(.8 + s));
@@ -852,9 +902,9 @@ function step(dt){
    .f('dt', dt).f('uNoise', L.noise*(.35 + 1.4*A.bass + .6*A.level)*(DBG.noise ?? 1)).f('uNoiseScale', L.noiseScale).f('uTime', time).f('uBuoy', L.buoy)
    .f('uObstacle', obstacle ? 1 : 0).f('aspect', a).f('uDilate', .012);
   blit(vel.write); vel.swap();
-  if (C.on && S.camFx === 'motion' && camOK) {
+  if (C.on && camOK && S.camPush > 0) {
     p = P.camVel.use(); setTexel(p, vel.w, vel.h);
-    p.t('uVelocity', vel.read.tex).t('uCam', camTex[camIdx]).t('uCamPrev', camTex[camIdx^1]).f('aspect', a).f('uCamAspect', C.aspect).f('uMirror', C.mirror ? 1 : 0).f('uForce', 300).f('camTexel', 1/640, 1/480);
+    p.t('uVelocity', vel.read.tex).t('uFlow', flowF.read.tex).f('aspect', a).f('uCamAspect', C.aspect).f('uMirror', C.mirror ? 1 : 0).f('uForce', 260*S.camPush);
     blit(vel.write); vel.swap();
   }
   p = P.divergence.use(); setTexel(p, vel.w, vel.h); p.t('uVelocity', vel.read.tex); blit(divg);
@@ -872,8 +922,8 @@ function step(dt){
     p.unit = 0; p.t('uVelocity', vel.read.tex).t('uSource', coord.read.tex).t('uLogo', LOGO.tex || blackTex).f('dissipation', 0).f('uRelax', L.relax*dt*60).f('uMask', 0);
     blit(coord.write); coord.swap();
   }
-  if (C.on && camOK && S.camFx === 'paint') {
-    p = P.camDye.use(); setPal(p); p.t('uDye', dye.read.tex).t('uCam', camTex[camIdx]).t('uCamPrev', camTex[camIdx^1]).f('aspect', a).f('uCamAspect', C.aspect).f('uMirror', C.mirror ? 1 : 0).f('uAmt', .5).f('uTime', time).f('uHue', hue);
+  if (C.on && camOK && S.camPaint > 0) {
+    p = P.camDye.use(); setPal(p); p.t('uDye', dye.read.tex).t('uCam', camTex[camIdx]).t('uFlow', flowF.read.tex).f('aspect', a).f('uCamAspect', C.aspect).f('uMirror', C.mirror ? 1 : 0).f('uAmt', .35*S.camPaint).f('uTime', time).f('uHue', hue);
     blit(dye.write); dye.swap();
   }
 }
@@ -902,7 +952,9 @@ function render(){
   const logoModeN = {off:-1, obstacle:0, ghost:1, holo:2, glass:3}[S.logoMode];
   c.t('uScene', scene.read.tex).t('uBloom', bloomA.tex).t('uLogo', LOGO.tex || blackTex).t('uHold', hold.tex);
   c.f('aspect', a).f('uTime', time).f('uBass', A.bass).f('uHigh', A.high).f('uBeat', beatPulse).f('uHue', hue).f('uBloomAmt', bloomAmt).f('uFade', fade)
-   .f('uLogoMode', logoModeN).f('uLogoVis', LOGO.ready && S.logoMode !== 'off' ? 1 : 0).f('uFlash', flash).v4('uRip', ripples).f('sceneTexel', scene.tx, scene.ty);
+   .f('uLogoMode', logoModeN).f('uLogoVis', LOGO.ready && S.logoMode !== 'off' ? 1 : 0).f('uFlash', flash).v4('uRip', ripples).f('sceneTexel', scene.tx, scene.ty)
+   .t('uCam', C.on && camOK ? camTex[camIdx] : blackTex).t('uFlow', flowF ? flowF.read.tex : blackTex).f('uCamOn', C.on && camOK ? 1 : 0).f('uCamAspect', C.aspect).f('uMirror', C.mirror ? 1 : 0)
+   .f('uEdges', S.camEdges).f('uEdgeDetail', S.camDetail).f('uWarp', S.camWarp).f('uMid', A.mid);
   blit(null);
 }
 
@@ -935,11 +987,16 @@ function tick(dt, now){
   time += dt;
   resize();
   analyze(dt, now);
-  if (A.beat) onBeat(A.beatStr);
-  beatPulse *= Math.exp(-dt*5); flash *= Math.exp(-dt*7); fade = Math.max(0, fade - dt/1.4);
+  if (A.beat) onBeat(A.beatStr*S.hits);
+  beatPulse *= Math.exp(-dt*5*(1 - S.smooth*.7)); flash *= Math.exp(-dt*7); fade = Math.max(0, fade - dt/1.4);
   hue += dt*(.012 + .03*A.level);
   rot += dt*(.05 + .25*A.mid);
-  camOK = uploadCam();
+  const newCam = uploadCam(); camOK = newCam !== false;
+  if (camOK && newCam === 'new') {
+    const fp = P.camFlow.use(); setTexel(fp, flowF.w, flowF.h);
+    fp.t('uCam', camTex[camIdx]).t('uCamPrev', camTex[camIdx^1]).t('uPrevFlow', flowF.read.tex).f('flowTexel', 1/flowF.w, 1/flowF.h).f('uSmooth', .55).f('uNoise', .012);
+    blit(flowF.write); flowF.swap();
+  }
   if (!DBG.noEmit) emit(dt);
   if (!DBG.noStep) step(Math.min(dt, 1/60));
   render();
@@ -969,7 +1026,6 @@ function pills(el, items, get, set){
 pills($('#looks'), LOOKS.map(l => [l, LOOK_NAMES[l]]), () => S.look, k => setLook(k));
 pills($('#logoModes'), [['off','OFF'],['ghost','GHOST'],['holo','HOLO FOIL'],['glass','GLASS'],['obstacle','SHAPE ONLY']], () => S.logoMode, k => S.logoMode = k);
 pills($('#camModes'), [['off','OFF'],['user','SELFIE'],['environment','BACK']], () => S.cam, k => { S.cam = k; if (k === 'off') stopCam(); else startCam(k); });
-pills($('#camFx'), [['motion','MOTION PUSH'],['paint','MOTION PAINT'],['blend','BLEND ONLY']], () => S.camFx, k => S.camFx = k);
 pills($('#quals'), Object.entries(QUALS).map(([k, q]) => [k, q.name]), () => S.quality, k => { S.quality = k; canvas.width = 0; });
 const palsEl = $('#pals');
 PALETTES.forEach((p, i) => {
@@ -984,15 +1040,13 @@ tog('#flowBtn', 'flow'); tog('#autoBtn', 'auto'); tog('#padsBtn', 'pads', () => 
 tog('#demoBtn', 'demo', () => { if (!S.demo && !A.ok) startMic().catch(showMicHelp); });
 tog('#cleanBtn', 'clean', () => { if (S.clean) { closePanel(); toast('Clean TV mode — 3-finger tap to show controls'); } });
 $('#fsBtn').addEventListener('click', () => { const d = document.documentElement; (d.requestFullscreen || d.webkitRequestFullscreen || (()=>toast('On iPhone: Share › Add to Home Screen for full screen'))).call(d); });
-$('#logoSize').addEventListener('input', e => { S.logoSize = +e.target.value; save(); });
-$('#camBlend').addEventListener('input', e => { S.camBlend = +e.target.value; save(); });
-$('#sens').addEventListener('input', e => { S.sens = +e.target.value; save(); });
+document.querySelectorAll('input[data-k]').forEach(el => el.addEventListener('input', () => { S[el.dataset.k] = +el.value; lastUI = performance.now(); save(); }));
 function updateUI(){
   for (const el of document.querySelectorAll('#panel .row')) if (el._get) for (const b of el.children) b.classList.toggle('on', b.dataset.k === el._get());
   [...palsEl.children].forEach((b, i) => b.classList.toggle('on', i === S.pal));
   $('#flowBtn').classList.toggle('on', S.flow); $('#autoBtn').classList.toggle('on', S.auto); $('#padsBtn').classList.toggle('on', S.pads);
   $('#demoBtn').classList.toggle('on', S.demo || !A.ok); $('#cleanBtn').classList.toggle('on', S.clean);
-  $('#logoSize').value = S.logoSize; $('#camBlend').value = S.camBlend; $('#sens').value = S.sens;
+  document.querySelectorAll('input[data-k]').forEach(el => { el.value = S[el.dataset.k]; });
   $('#micStat').textContent = S.demo ? 'demo groove' : (A.ok ? 'mic live' : 'no mic');
   $('#menuBtn').classList.toggle('hidden', S.clean);
 }
