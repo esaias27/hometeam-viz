@@ -104,7 +104,9 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:22px;heigh
 <div id="padGrid"></div>
 
 <div id="panel">
-  <div class="sec"><h3>LOOK</h3><div class="row" id="looks"></div></div>
+  <div class="sec"><h3>LOOK</h3><div class="row" id="looks"></div>
+    <div class="row" style="margin-top:6px"><button class="pill" id="symBtn">AUTO SYMMETRY</button></div>
+    <div class="hint">Auto Symmetry lets Kaleido and both Mandalas change their number of folds every 64 beats.</div></div>
   <div class="sec"><h3>COLOR</h3><div class="row" id="pals"></div></div>
   <div class="sec"><h3>LOGO</h3><div class="row" id="logoModes"></div>
     <div class="row" style="margin-top:6px"><button class="pill" id="flowBtn">FLOW AROUND</button>
@@ -179,7 +181,7 @@ const QUALS = {
   max:    {name:'MAX',           dpr:2.0,  sim:160, dye:1024, iters:22, bloom:true,  fps:60, scene:1.0},
 };
 const S = { // live state
-  look:'marble', pal:1, logoMode:'holo', flow:true, logoSize:0.48, cam:'off', camBlend:0.15, camEdges:0.85, camDetail:0.5, camPush:0.6, camPaint:0.25, camWarp:0.5, smooth:0.35, hits:1.0,
+  look:'marble', pal:1, logoMode:'holo', flow:true, logoSize:0.48, cam:'off', camBlend:0.15, camEdges:0.85, camDetail:0.5, camPush:0.6, camPaint:0.25, camWarp:0.5, smooth:0.35, hits:1.0, autoSym:true,
   sens:1.1, demo:false, pads:false, auto:false, quality:'normal', clean:false
 };
 try { Object.assign(S, JSON.parse(localStorage.getItem('ht-viz')||'{}')); } catch(e){}
@@ -1134,7 +1136,8 @@ function shuffleTick(dt){
 function render(){
   const a = aspect(), Q = QUALS[S.quality];
   const symLook = S.look === 'kaleido' || S.look === 'mandala' || S.look === 'mandala2';
-  const segs = S.look === 'mandala' ? 8 + 4*Math.floor((beatCount/64) % 2) : S.look === 'mandala2' ? [6, 8, 12, 8][Math.floor(beatCount/64) % 4] : 6 + 2*Math.floor((beatCount/64) % 3);
+  const bc = S.autoSym ? beatCount : 0;
+  const segs = S.look === 'mandala' ? 8 + 4*Math.floor((bc/64) % 2) : S.look === 'mandala2' ? [6, 8, 12, 8][Math.floor(bc/64) % 4] : 6 + 2*Math.floor((bc/64) % 3);
   if (symLook && segs !== lastSegs && lastSegs && lastLook === S.look) { const cp = P.copy.use(); cp.t('uTex', scene.read.tex).f('uMul', 1); blit(hold); fade = 1; fadeTime = 3; }
   lastSegs = segs; lastLook = S.look;
   if (S.look === 'shuffle') shuffleTick(1/60);
@@ -1248,7 +1251,7 @@ PALETTES.forEach((p, i) => {
   palsEl.appendChild(b);
 });
 const tog = (id, key, after) => $(id).addEventListener('click', () => { S[key] = !S[key]; save(); updateUI(); after && after(); });
-tog('#flowBtn', 'flow'); tog('#autoBtn', 'auto'); tog('#padsBtn', 'pads', () => flashPads());
+tog('#flowBtn', 'flow'); tog('#symBtn', 'autoSym'); tog('#autoBtn', 'auto'); tog('#padsBtn', 'pads', () => flashPads());
 tog('#demoBtn', 'demo', () => { if (!S.demo && !A.ok) startMic().catch(showMicHelp); });
 tog('#cleanBtn', 'clean', () => { if (S.clean) { closePanel(); toast('Clean TV mode — 3-finger tap to show controls'); } });
 $('#fsBtn').addEventListener('click', () => { const d = document.documentElement; (d.requestFullscreen || d.webkitRequestFullscreen || (()=>toast('On iPhone: Share › Add to Home Screen for full screen'))).call(d); });
@@ -1256,7 +1259,7 @@ document.querySelectorAll('input[data-k]').forEach(el => el.addEventListener('in
 function updateUI(){
   for (const el of document.querySelectorAll('#panel .row')) if (el._get) for (const b of el.children) b.classList.toggle('on', b.dataset.k === el._get());
   [...palsEl.children].forEach((b, i) => b.classList.toggle('on', i === S.pal));
-  $('#flowBtn').classList.toggle('on', S.flow); $('#autoBtn').classList.toggle('on', S.auto); $('#padsBtn').classList.toggle('on', S.pads);
+  $('#flowBtn').classList.toggle('on', S.flow); $('#symBtn').classList.toggle('on', S.autoSym); $('#autoBtn').classList.toggle('on', S.auto); $('#padsBtn').classList.toggle('on', S.pads);
   $('#demoBtn').classList.toggle('on', S.demo || !A.ok); $('#cleanBtn').classList.toggle('on', S.clean);
   document.querySelectorAll('input[data-k]').forEach(el => { el.value = S[el.dataset.k]; });
   $('#micStat').textContent = S.demo ? 'demo groove' : (A.ok ? 'mic live' : 'no mic');
