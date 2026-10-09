@@ -442,74 +442,100 @@ FS.mandala = LOOKU + `void main(){
   o = vec4(col*(1. + .2*uBeat), 1.);
 }`;
 FS.mandala2 = LOOKU + `
-uniform float uZoomPh;
+uniform float uZoomPh, uTwist, uPx;
 mat2 rot2(float a){ float c = cos(a), s = sin(a); return mat2(c, -s, s, c); }
-float circ(vec2 u, vec2 c, float r){ return length(u - c) - r; }
+vec2 kfold(vec2 p, float n){ float r = length(p), a = atan(p.y, p.x), s = 6.28318/n; a = mod(a, s) - s*.5; return vec2(cos(a), abs(sin(a)))*r; }
 float lens(vec2 u, vec2 c, float off, float r){ return max(length(u - c - vec2(0., off)) - r, length(u - c + vec2(0., off)) - r); }
-float fillOf(float d){ return 1. - smoothstep(-.012, .012, d); }
-vec2 pfold(vec2 p, float n){ float r = length(p), a = atan(p.y, p.x), s = 6.28318/n; a = mod(a, s) - s*.5; return vec2(cos(a), abs(sin(a)))*r; }
+float soft(float d, float w){ return 1. - smoothstep(-w, w, d); }
+vec3 hueRot(vec3 c, float h){ vec3 k = vec3(.57735); float ca = cos(h), sa = sin(h); return c*ca + cross(k, c)*sa + k*dot(k, c)*(1. - ca); }
+vec3 screenB(vec3 a, vec3 b){ return 1. - (1. - clamp(a, 0., 1.))*(1. - clamp(b, 0., 1.)); }
+vec3 tmN(vec3 c){ float m = max(max(c.r, c.g), c.b); return m > 1e-4 ? c*(1. - exp(-m*1.15))/m : c; }
 void main(){
-  vec2 p = vUv - .5; p.x *= aspect; p /= min(aspect, 1.)*.5;
-  p = rot2(uTime*.03 + uRot*.1)*p;
+  float t = uTime, N = uSegs;
+  vec2 p0 = vUv - .5; p0.x *= aspect; p0 /= min(aspect, 1.)*.5;          // 1.0 = half the short side
+  float r0 = length(p0);
+
+  // ---------- churn: radius-dependent twist + turbulent warp ----------
+  float tw = uTwist*sin(r0*3.2 - t*.55) + .15*sin(t*.11);
+  vec2 p = rot2(tw)*p0;
+  { // symmetric churn: warp radius & angle using noise sampled in folded space (keeps N-fold symmetry)
+    vec2 kf = kfold(p, N);
+    float w1 = fbm(kf*1.6 + vec2(t*.07, 0.)) - .5, w2 = fbm(kf*1.6 + vec2(3.3, -t*.06)) - .5;
+    float sgn = sign(sin(atan(p.y, p.x)*N*.5 + 1e-4));
+    float rr = length(p)*(1. + w1*.18*(.5 + uBassS)), aa = atan(p.y, p.x) + w2*.12*(.4 + uMidS)*sgn;
+    p = rr*vec2(cos(aa), sin(aa));
+  }
   float r = length(p) + 1e-4, a = atan(p.y, p.x);
-  float N = uSegs;
-  // log-polar rings that endlessly flow inward: the mandala folds into itself
+
+  // ---------- 1. feedback: last frame folded back into itself, zooming inward ----------
+  vec2 fp = rot2(.02 + .05*sin(t*.07) + .03*uMidS)*kfold(rot2(-t*.03)*p0, N);
+  fp *= 1.035 + .035*uBassS + .03*uBeat;
+  float kk = min(aspect, 1.)*.5;
+  vec3 prev = texture(uPrev, mirrorUV(vec2(fp.x*kk/aspect, fp.y*kk) + .5)).rgb;
+  vec3 col = hueRot(prev, .025 + .05*uMidS)*(.7 + .08*uLevel);
+
+  // ---------- 2. soft layer: translucent petal rings flowing inward ----------
   float per = .62;
   float z = (log(r) + uZoomPh)/per;
   float cell = floor(z), fx = fract(z);
   float hw = (3.14159/N)/per;
-  float ay = a/per + mod(cell, 2.)*hw;
-  float yy = abs(mod(ay, 2.*hw) - hw);
+  float yy = abs(mod(a/per + mod(cell, 2.)*hw, 2.*hw) - hw);
   vec2 u = vec2(fx, yy);
-  float s = texture(uSpec, vec2(mod(cell, 7.)/7.*.8 + .05, .5)).r;
-  float hc = cell*.11 + uHue;
+  float sB = texture(uSpec, vec2(mod(cell, 7.)/7.*.8 + .05, .5)).r;
+  float hc = cell*.13 + uHue;
   vec3 cA = pal(hc), cB = pal(hc + .33), cC = pal(hc + .66);
-  vec3 col = cA*.025 + cC*.03*(1. - fx);
-  // big petal
-  float dP = lens(u, vec2(.5, 0.), .17, .4 + .05*s);
-  float fP = fillOf(dP);
-  col = mix(col, cA*(.35 + .9*clamp(-dP/.38, 0., 1.)), fP*.8);
-  col += cA*exp(-abs(dP)*70.)*(.5 + .9*s);
-  // translucent side lobes from the neighbouring sector
-  float dL = lens(u - vec2(.6, hw), vec2(0.), .12, .3 + .04*s);
-  float fL = fillOf(dL);
-  col = mix(col, col*.55 + cB*.65, fL*.55);
-  col += cB*exp(-abs(dL)*80.)*.7;
-  // inner heart
-  float dH = min(circ(u, vec2(.24, .05), .07 + .03*s), circ(u, vec2(.24, -.05), .07 + .03*s));
-  col = mix(col, mix(cC, vec3(1.), .45), fillOf(dH)*.8);
-  col += cC*exp(-abs(dH)*90.)*.6;
-  // filigree inside petals
-  vec2 q = u*vec2(3., 3.); float tr = 1e3;
-  for (int i = 0; i < 4; i++) { q = abs(q) - vec2(.7, .35); q = rot2(.55 + .1*sin(uTime*.2))*q*1.45; tr = min(tr, abs(length(q) - .45)); }
-  col += cC*exp(-tr*10.)*.35*(fP + fL*.6)*(.6 + s);
-  col += cB*exp(-tr*14.)*.14*(1. - fP)*(1. - fL);
-  // second, smaller petal ring between the big ones
-  float dS = lens(u - vec2(.12, hw*.55), vec2(0.), .06, .12 + .03*s);
-  col = mix(col, cB*.9, fillOf(dS)*.7); col += mix(cB, vec3(1.), .4)*exp(-abs(dS)*120.)*.6;
-  float fil = abs(sin(u.x*26. - u.y*9. + uTime*.6));
-  col += cB*pow(1. - fil, 14.)*fP*.35;
-  // scalloped ring + spokes
-  float sc = abs(fx - .05 - .035*cos(yy/hw*6.28318));
-  col += mix(cC, vec3(1.), .3)*exp(-sc*90.)*(.6 + .8*s);
-  col += cB*exp(-(hw - yy)*60.)*.18*(1. - fP);
-  // jewels + dotted ring
-  float dJ = min(circ(u, vec2(0., hw), .06 + .025*s), circ(u, vec2(1., hw), .06 + .025*s));
-  col = mix(col, mix(cC, vec3(1.), .6), fillOf(dJ));
-  col += cC*exp(-max(dJ, 0.)*28.)*.4*(1. + uHigh);
-  float dd = length(vec2(fx - .9, mod(yy, hw/3.) - hw/6.)) - .022;
-  col += mix(cB, vec3(1.), .5)*fillOf(dd)*.8;
-  // fade the infinitely small rings near the centre into a glowing star
-  float cen = smoothstep(.015, .16, r);
-  col *= cen;
-  float star = exp(-r*(10. + 8.*abs(cos(a*N*.5))));
-  col += pal(uHue + uTime*.05)*star*(.9 + 1.6*uBassS) + vec3(1.)*exp(-r*30.)*.4;
-  // taps / camera folded in
-  vec2 fq = pfold((vUv - .5)*vec2(aspect, 1.), N); vec2 suv = mirrorUV(vec2(fq.x/aspect, fq.y) + .5);
-  col += tm(shadeDye(suv), 2.)*.45;
+  float dP = lens(u, vec2(.5, 0.), .17, .4 + .06*sB);
+  float dL = lens(u - vec2(.6, hw), vec2(0.), .12, .3 + .05*sB);
+  float fP = soft(dP, .06), fL = soft(dL, .06);
+  vec3 softC = cA*fP*(.25 + .55*clamp(-dP*3., 0., 1.)) + cB*fL*.45 + (cA + cB)*.5*exp(-abs(dP)*25.)*.25;
+  float fade = smoothstep(.02, .2, r);
+  // ---------- 3. multiply: carve negative space ----------
+  float mask = max(max(fP, fL), 1. - smoothstep(0., .25, r));
+  col *= .12 + .88*mask;
+  col = screenB(col, softC*fade*(.7 + .6*sB));
+
+  // ---------- 4. hard layer: counter-rotating fractal filigree ----------
+  float N2 = N + 2.;
+  vec2 q = rot2(-t*.09 - uRot*.4)*p*(1.5 + .25*sin(t*.05));
+  float ln = 1e3, nd = 1e3, sc = 1.; float li = 0.;
+  for (int i = 0; i < 5; i++) {
+    float fi = float(i);
+    q = kfold(q, N2);
+    q = abs(q) - vec2(.55 + .08*sin(t*.17 + fi), .16 + .05*sin(t*.13 + fi*1.7));
+    q = rot2(.55 + .12*sin(t*.07 + fi))*q;
+    q *= 1.38; sc *= 1.38;
+    float l = abs(q.y)/sc; if (l < ln) { ln = l; li = fi; }
+    nd = min(nd, length(q - vec2(.25, 0.))/sc);
+  }
+  float px = uPx*(1.6 - .6*uHigh);
+  float hardLine = 1. - smoothstep(0., px*1.2, ln - px*.3);
+  float halo = exp(-ln/(px*7.));
+  vec3 irid = .55 + .45*cos(6.28318*(a/6.28318*2. + li*.15 + t*.05 + uHue + vec3(0., .33, .67)));
+  col += irid*(hardLine*(.7 + .8*sB) + halo*.18)*fade;
+
+  // ---------- 5. sacred geometry: flower-of-life rings, difference blended ----------
+  float geo = 0.;
+  for (int i = 0; i < 4; i++) {
+    float fi = float(i);
+    float R = .16*pow(1.62, fi);
+    vec2 g = kfold(rot2(t*(.05 + .04*fi)*(mod(fi, 2.)*2. - 1.) + fi)*p, N);
+    float d = abs(length(g - vec2(R, 0.)) - R*(1. + .06*texture(uSpec, vec2(fi*.2 + .1, .5)).r));
+    geo = max(geo, 1. - smoothstep(0., px*1.4, d - px*.2));
+  }
+  vec3 gC = mix(cC, vec3(1.), .4);
+  col = mix(col, abs(gC - col), geo*.9);
+
+  // ---------- 6. sparkle nodes + radiant core ----------
+  col += mix(cB, vec3(1.), .6)*exp(-nd/(px*2.5))*(.4 + 1.8*uHigh + .6*uBeat)*fade;
+  float star = exp(-r*(9. + 7.*abs(cos(a*N*.5 + t*.2))));
+  col += pal(uHue + t*.05)*star*(.7 + 1.5*uBassS) + vec3(1.)*exp(-r*28.)*.5;
+
+  // ---------- taps / camera, folded ----------
+  vec2 tq = kfold((vUv - .5)*vec2(aspect, 1.), N);
+  vec2 suv = mirrorUV(vec2(tq.x/aspect, tq.y) + .5);
+  col = screenB(col, tm(shadeDye(suv), 2.)*.6);
   if (uCamOn > .5) col = mix(col, max(col, psyCam(suv)), uCamBlend);
-  col = tm(col, 1.3);
-  o = vec4(col*(1. + .1*uBeat), 1.);
+  o = vec4(tmN(col*(1. + .1*uBeat)), 1.);
 }`;
 FS.fluid = LOOKU + `void main(){
   vec3 c = tm(shadeDye(vUv), 2.4);
@@ -1021,7 +1047,7 @@ function render(){
   p.t('uDye', dye.read.tex).t('uVel', vel.read.tex).t('uCoord', coord.read.tex).t('uPrev', scene.read.tex).t('uCam', C.on && camOK ? camTex[camIdx] : blackTex).t('uSpec', specTex);
   p.f('dyeTexel', dye.tx, dye.ty).f('uTime', time).f('uBass', A.bass).f('uMid', A.mid).f('uHigh', A.high).f('uLevel', A.level).f('uBassS', A.bassS || 0).f('uMidS', A.midS || 0).f('uBeat', beatPulse).f('uHue', hue).f('aspect', a)
    .f('uCamOn', C.on && camOK ? 1 : 0).f('uCamAspect', C.aspect).f('uMirror', C.mirror ? 1 : 0).f('uCamBlend', S.camBlend)
-   .f('uSegs', segs).f('uRot', rot).f('uZoomPh', zoomPh);
+   .f('uSegs', segs).f('uRot', rot).f('uZoomPh', zoomPh).f('uTwist', .05 + .18*(A.midS || 0) + .15*kick).f('uPx', 2/Math.min(scene.w, scene.h));
   blit(scene.write); scene.swap();
   let bloomAmt = 0;
   if (Q.bloom) {
